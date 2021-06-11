@@ -17,7 +17,7 @@ exports_files(["packages.bzl"])
         "--json-packages",
     ] + [str(repository_ctx.path(src_path)) for src_path in repository_ctx.attr.sources]
 
-    pypath = ""
+    pypath = str(repository_ctx.path(Label("@bazel_tools//third_party/py/six:BUILD")).dirname)
     result = repository_ctx.execute(args, environment = {
         "PYTHONPATH": pypath,
     })
@@ -72,7 +72,7 @@ def _dpkg_src_impl(repository_ctx):
 
     repository_ctx.file("file/BUILD", """
 package(default_visibility = ["//visibility:public"])
-exports_files(["Packages.json", "os_release.tar"])
+exports_files(["Packages.json"])
 """)
 
     repository_ctx.download(
@@ -84,8 +84,10 @@ exports_files(["Packages.json", "os_release.tar"])
     args = [
         repository_ctx.which("python"),
         str(repository_ctx.path(repository_ctx.attr._generator)),
+        "--workspace-name=" + repository_ctx.attr.name,
         "--package-file=" + str(repository_ctx.path("Packages.gz")),
         "--json-out=" + str(repository_ctx.path("file/Packages.json")),
+        "--build-out=" + str(repository_ctx.path("BUILD")),
         "--mirror-url=" + mirror_url,
         "--snapshot=" + snapshot,
         "--package-prefix=" + package_prefix,

@@ -15,26 +15,6 @@ http_archive(
 
 load("@rules_python//python:pip.bzl", "pip_parse")
 
-http_archive(
-    name = "subpar",
-    sha256 = "b80297a1b8d38027a86836dbadc22f55dc3ecad56728175381aa6330705ac10f",
-    strip_prefix = "subpar-2.0.0",
-    urls = ["https://github.com/google/subpar/archive/refs/tags/2.0.0.tar.gz"],
-)
-
-http_archive(
-    name = "rules_pkg",
-    sha256 = "038f1caa773a7e35b3663865ffb003169c6a71dc995e39bf4815792f385d837d",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.4.0/rules_pkg-0.4.0.tar.gz",
-        "https://github.com/bazelbuild/rules_pkg/releases/download/0.4.0/rules_pkg-0.4.0.tar.gz",
-    ],
-)
-
-load("@rules_pkg//:deps.bzl", "rules_pkg_dependencies")
-
-rules_pkg_dependencies()
-
 ## docker dependencies
 
 http_archive(
@@ -98,7 +78,7 @@ dpkg_list(
     name = "debian10_bundle",
     sources = [
         "@debian_buster//file:Packages.json",
-        "@debian_buster_security//file:Packages.json",
+        "@debian_buster_security//file:packages.json",
     ],
 )
 

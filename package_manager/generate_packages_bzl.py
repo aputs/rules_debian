@@ -2,8 +2,11 @@
 
 import argparse
 import json
+import six
+import sys
+import re
 
-from textwrap import dedent
+from contextlib import contextmanager
 
 parser = argparse.ArgumentParser(
     description="parse Packages.json and generate packages.bzl"
@@ -15,11 +18,12 @@ parser.add_argument(
 parser.add_argument("--workspace-name", action="store", help="workspace name")
 parser.add_argument("--out", action="store", help="Write parsed Output to File")
 
-INDEX_KEY = "Package"
-FILENAME_KEY = "Filename"
-SHA256_KEY = "SHA256"
+PACKAGE_KEY = "package"
+FILENAME_KEY = "filename"
+VERSION_KEY = "version"
+SHA256_KEY = "sha256"
 
-# "libzmq3-dev": {
+# {
 #   "Package": "libzmq3-dev",
 #   "Source": "zeromq3",
 #   "Version": "4.3.1-4+deb10u1",
@@ -42,67 +46,94 @@ SHA256_KEY = "SHA256"
 # }
 
 
+def read_packages_json(workspace_name, filenames):
+    for filename in filenames:
+        with open(filename, "rb") as f:
+            for line in f:
+                if isinstance(line, six.binary_type):
+                    line = line.decode("utf-8")
+                line = line.rstrip()
+                entry = json.loads(line)
+                entry["workspace-name"] = workspace_name
+                yield entry
+
+
+def resolve_packages(workspace_name, filenames):
+    all_packages = {}
+
+    for package in read_packages_json(workspace_name, filenames):
+        name = package[PACKAGE_KEY]
+        version = package[VERSION_KEY]
+        sha256 = package[SHA256_KEY]
+        location = package[FILENAME_KEY]
+        filename = location.split("/")[-1]
+        package_workspace_name = package["__workspace_name"]
+        target_workspace = package_workspace_name + "__" + name + "__" + version
+        resolved = {
+            "location": location,
+            "version": version,
+            "sha256": sha256,
+            "filename": filename,
+            "target_workspace": re.sub(r"[^.a-zA-Z0-9-_]", "_", target_workspace),
+        }
+
+        all_packages[name] = all_packages.get(name, [])
+        all_packages[name].append(resolved)
+
+    return all_packages
+
+
+@contextmanager
+def _openfilename_or_stdout(filename, *args, **kwargs):
+    try:
+        with open(filename, *args, **kwargs) as f:
+            yield f
+            f.close()
+    except:
+        yield sys.stdout
+
+
 def main():
     args = parser.parse_args()
 
-    all_packages = {}
+    all_packages = resolve_packages(args.workspace_name, args.json_packages)
 
-    for j in args.json_packages:
-        with open(j, "r") as f:
-            packages = json.load(f)
-            for name, fields in packages.items():
-                all_packages[name] = fields
-
-    gen = dedent(
-        """
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
-
-_WORKSPACE_NAME = '"""
-        + args.workspace_name
-        + """'
-_ALL_PACKAGES = {
-"""
-        + ",\n".join(
-            [
-                "'" + name + "': '" + fields[FILENAME_KEY].split("/")[-1] + "'"
-                for name, fields in all_packages.items()
-            ]
+    with _openfilename_or_stdout(args.out, "w") as out:
+        out.write(
+            """load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")\n\n"""
         )
-        + """
-}
-
-def _canon_name(name):
-    return "%s__%s" % (_WORKSPACE_NAME, name.replace("+", "_"))
-
+        out.write("ALL_PACKAGES = ")
+        json.dump(all_packages, out)
+        out.write("\n\n")
+        out.write(
+            """
 def package(name):
-    if name not in _ALL_PACKAGES.keys():
+    if name not in ALL_PACKAGES:
         fail("unknown package `{}`".format(name))
+    entry = ALL_PACKAGES[name][0]
+    return "@" + entry["target_workspace"] + "//file:" + entry["filename"]
 
-    return "@" + _canon_name(name) + "//file:" + _ALL_PACKAGES[name]
+def parse_package_list():
+            """
+        )
 
-def parse_package_list(**kwargs):
-
-"""
-    )
-
-    for name, fields in all_packages.items():
-        gen = gen + """
+        for _, packages in all_packages.items():
+            for package in packages:
+                out.write(
+                    """
     http_file(
-        name = _canon_name("{name}"),
-        urls = ["{url}"],
+        name = "{name}",
+        urls = ["{location}"],
         sha256 = "{sha256}",
         downloaded_file_path="{filename}",
     )
-""".format(
-            name=name,
-            url=fields[FILENAME_KEY],
-            sha256=fields[SHA256_KEY],
-            filename=fields[FILENAME_KEY].split("/")[-1],
-        )
-
-    if args.out:
-        with open(args.out, "w") as f:
-            f.write(gen)
+                """.format(
+                        name=package["target_workspace"],
+                        location=package["location"],
+                        sha256=package["sha256"],
+                        filename=package["filename"],
+                    )
+                )
 
 
 if __name__ == "__main__":
